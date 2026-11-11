@@ -1,5 +1,6 @@
 import { Fragment, useState } from "react";
-import { ChevronRight, TriangleAlert } from "lucide-react";
+import { ChevronRight, TriangleAlert, Unlink } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -41,9 +42,10 @@ interface InvoiceTableProps {
   results: InvoiceResult[];
   filter: InvoiceFilter;
   onFilter: (f: InvoiceFilter) => void;
+  onUnpair: (paymentId: string) => void;
 }
 
-export function InvoiceTable({ results, filter, onFilter }: InvoiceTableProps) {
+export function InvoiceTable({ results, filter, onFilter, onUnpair }: InvoiceTableProps) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const rows = results.filter((r) => matches(r, filter));
 
@@ -197,8 +199,21 @@ export function InvoiceTable({ results, filter, onFilter }: InvoiceTableProps) {
                               <span className="text-muted-foreground">
                                 {via === "vs"
                                   ? "podle VS"
-                                  : `VS nalezen ve zprávě „${p.message}"`}
+                                  : via === "message"
+                                    ? `VS nalezen ve zprávě „${p.message}"`
+                                    : "spárováno ručně"}
                               </span>
+                              {via === "manual" && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 px-2"
+                                  onClick={() => onUnpair(p.id)}
+                                >
+                                  <Unlink />
+                                  Zrušit spárování
+                                </Button>
+                              )}
                             </li>
                           ))}
                         </ul>

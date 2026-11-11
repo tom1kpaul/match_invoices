@@ -22,4 +22,5 @@ export const SAMPLE_STATEMENT_CSV = `Datum;Částka;Měna;Protiúčet;Název pro
 04.11.2026;24 200,00;CZK;6789012345/0600;Tiskárna Písmeno s.r.o.;;Úhrada faktury VS 2026008
 05.11.2026;5 000,00;CZK;7890123456/0100;Jan Svoboda;2026099;Faktura
 06.11.2026;1 500,00;CZK;8901234567/2700;Neznámý plátce;;Děkujeme za spolupráci
+08.11.2026;6 050,00;CZK;9012345678/0100;Zahradnictví Kvítek;2026060;Faktura listopad
 `;

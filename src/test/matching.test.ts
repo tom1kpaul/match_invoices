@@ -116,6 +116,51 @@ describe("pravidla párování", () => {
   });
 });
 
+describe("ruční spárování s nejpodobnější fakturou", () => {
+  function full(over: Partial<Payment>): Payment {
+    return { ...pay(605000, "2026060", "Faktura listopad"), ...over };
+  }
+  const invoice: Invoice = {
+    ...inv("2026006", 605000, "30.11.2026"),
+    customer: "Zahradnictví Kvítek",
+    issueDate: parseDate("01.11.2026"),
+  };
+
+  it("navrhne fakturu, když sedí většina parametrů (3 z 5)", () => {
+    const p = full({ accountName: "Jiná firma", date: parseDate("08.11.2026"), vs: "999" , message: "" });
+    // sedí částka, měna, datum
+    const r = matchPayments([invoice], [p], TODAY);
+    expect(r.unmatched[0]!.suggestion?.invoice.id).toBe(invoice.id);
+    expect(r.unmatched[0]!.suggestion?.matched).toEqual(["amount", "currency", "date"]);
+  });
+
+  it("nenavrhne fakturu, když sedí jen 2 z 5 parametrů", () => {
+    const p = full({ amount: 150000, accountName: "Jiná firma", vs: "999", message: "", date: parseDate("08.11.2026") });
+    const r = matchPayments([invoice], [p], TODAY);
+    expect(r.unmatched[0]!.suggestion).toBeNull();
+  });
+
+  it("nenavrhne fakturu v jiné měně", () => {
+    const p = full({ currency: "EUR", accountName: "Zahradnictví Kvítek", date: parseDate("08.11.2026") });
+    const r = matchPayments([invoice], [p], TODAY);
+    expect(r.unmatched[0]!.suggestion).toBeNull();
+  });
+
+  it("VS s prohozenými číslicemi se počítá jako shoda", () => {
+    const p = full({ accountName: "Zahradnictví Kvítek", date: parseDate("08.11.2026") });
+    const r = matchPayments([invoice], [p], TODAY);
+    expect(r.unmatched[0]!.suggestion?.matched).toEqual(["amount", "currency", "customer", "vs", "date"]);
+  });
+
+  it("ručně spárovaná platba se započítá do faktury", () => {
+    const p = full({});
+    const r = matchPayments([invoice], [p], TODAY, { [p.id]: invoice.id });
+    expect(r.unmatched).toHaveLength(0);
+    expect(r.invoices[0]!.status).toBe("paid");
+    expect(r.invoices[0]!.payments[0]!.via).toBe("manual");
+  });
+});
+
 describe("ukázková data", () => {
   it("dává očekávaný souhrn", () => {
     const invoices = parseInvoicesCsv(SAMPLE_INVOICES_CSV).items;
@@ -123,7 +168,12 @@ describe("ukázková data", () => {
     const r = matchPayments(invoices, payments, TODAY);
     expect(r.summary.counts).toEqual({ paid: 3, partial: 1, overpaid: 2, unpaid: 2 });
     expect(r.summary.overdueUnpaid).toBe(1);
-    expect(r.unmatched).toHaveLength(2);
+    expect(r.unmatched).toHaveLength(3);
+    expect(r.unmatched.map((u) => u.suggestion?.invoice.number ?? null)).toEqual([
+      null,
+      null,
+      "FV2026006",
+    ]);
     expect(r.ignored).toHaveLength(2);
     // 15 980 + 18 150 + 6 050
     expect(r.summary.owed).toEqual([{ currency: "CZK", amount: 4018000 }]);

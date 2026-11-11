@@ -1,3 +1,5 @@
+import { Link2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -6,9 +8,20 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatDate, formatMoney, type UnmatchedPayment } from "@/lib/matching";
+import {
+  formatDate,
+  formatMoney,
+  SUGGESTION_PARAM_COUNT,
+  SUGGESTION_PARAM_LABELS,
+  type UnmatchedPayment,
+} from "@/lib/matching";
 
-export function UnmatchedTable({ items }: { items: UnmatchedPayment[] }) {
+interface UnmatchedTableProps {
+  items: UnmatchedPayment[];
+  onPair: (paymentId: string, invoiceId: string) => void;
+}
+
+export function UnmatchedTable({ items, onPair }: UnmatchedTableProps) {
   return (
     <section className="rounded-xl border bg-card shadow-card">
       <div className="flex items-baseline justify-between gap-3 border-b p-4">
@@ -25,18 +38,19 @@ export function UnmatchedTable({ items }: { items: UnmatchedPayment[] }) {
             <TableHead>Protiúčet</TableHead>
             <TableHead>VS</TableHead>
             <TableHead>Zpráva pro příjemce</TableHead>
-            <TableHead className="pr-4">Důvod</TableHead>
+            <TableHead>Důvod</TableHead>
+            <TableHead className="pr-4">Nejpodobnější faktura</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {items.length === 0 && (
             <TableRow className="hover:bg-transparent">
-              <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+              <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
                 Všechny příchozí platby byly spárovány.
               </TableCell>
             </TableRow>
           )}
-          {items.map(({ payment: p, reason }) => (
+          {items.map(({ payment: p, reason, suggestion }) => (
             <TableRow key={p.id}>
               <TableCell className="num pl-4">{formatDate(p.date)}</TableCell>
               <TableCell className="num text-right font-medium">
@@ -49,8 +63,34 @@ export function UnmatchedTable({ items }: { items: UnmatchedPayment[] }) {
                 )}
               </TableCell>
               <TableCell className="num text-muted-foreground">{p.vs || "—"}</TableCell>
-              <TableCell className="max-w-64 text-muted-foreground">{p.message || "—"}</TableCell>
-              <TableCell className="pr-4 text-sm">{reason}</TableCell>
+              <TableCell className="max-w-56 text-muted-foreground">{p.message || "—"}</TableCell>
+              <TableCell className="max-w-56 text-sm">{reason}</TableCell>
+              <TableCell className="pr-4">
+                {suggestion ? (
+                  <div className="flex min-w-56 flex-col items-start gap-1.5">
+                    <div className="text-sm">
+                      <span className="num font-medium">{suggestion.invoice.number}</span>{" "}
+                      <span className="text-muted-foreground">· {suggestion.invoice.customer}</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Sedí {suggestion.matched.length} z {SUGGESTION_PARAM_COUNT}:{" "}
+                      {suggestion.matched.map((m) => SUGGESTION_PARAM_LABELS[m]).join(", ")}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onPair(p.id, suggestion.invoice.id)}
+                    >
+                      <Link2 />
+                      Spárovat s {suggestion.invoice.number}
+                    </Button>
+                  </div>
+                ) : (
+                  <span className="text-sm text-muted-foreground">
+                    Žádná faktura se dostatečně neshoduje
+                  </span>
+                )}
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>

@@ -11,6 +11,7 @@ import {
   parseInvoicesCsv,
   parseStatementCsv,
   type Invoice,
+  type ManualPairs,
   type ParseResult,
   type Payment,
 } from "@/lib/matching";
@@ -55,17 +56,31 @@ function Index() {
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
   const [statementError, setStatementError] = useState<string | null>(null);
   const [filter, setFilter] = useState<InvoiceFilter>("all");
+  const [manual, setManual] = useState<ManualPairs>({});
 
   const result = useMemo(() => {
     if (!invoices || !statement) return null;
-    return matchPayments(invoices.data.items, statement.data.items, new Date());
-  }, [invoices, statement]);
+    return matchPayments(invoices.data.items, statement.data.items, new Date(), manual);
+  }, [invoices, statement, manual]);
+
+  function pair(paymentId: string, invoiceId: string) {
+    setManual((prev) => ({ ...prev, [paymentId]: invoiceId }));
+  }
+
+  function unpair(paymentId: string) {
+    setManual((prev) => {
+      const next = { ...prev };
+      delete next[paymentId];
+      return next;
+    });
+  }
 
   async function loadInvoices(file: File) {
     try {
       const data = parseInvoicesCsv(await readCsvFile(file));
       setInvoices({ name: file.name, data });
       setInvoiceError(null);
+      setManual({});
     } catch (e) {
       setInvoices(null);
       setInvoiceError(e instanceof Error ? e.message : "Soubor se nepodařilo načíst.");
@@ -77,6 +92,7 @@ function Index() {
       const data = parseStatementCsv(await readCsvFile(file));
       setStatement({ name: file.name, data });
       setStatementError(null);
+      setManual({});
     } catch (e) {
       setStatement(null);
       setStatementError(e instanceof Error ? e.message : "Soubor se nepodařilo načíst.");
@@ -89,6 +105,7 @@ function Index() {
     setInvoiceError(null);
     setStatementError(null);
     setFilter("all");
+    setManual({});
   }
 
   function reset() {
@@ -97,6 +114,7 @@ function Index() {
     setInvoiceError(null);
     setStatementError(null);
     setFilter("all");
+    setManual({});
   }
 
   return (
@@ -167,8 +185,13 @@ function Index() {
         {result ? (
           <>
             <Summary summary={result.summary} filter={filter} onFilter={setFilter} />
-            <InvoiceTable results={result.invoices} filter={filter} onFilter={setFilter} />
-            <UnmatchedTable items={result.unmatched} />
+            <InvoiceTable
+              results={result.invoices}
+              filter={filter}
+              onFilter={setFilter}
+              onUnpair={unpair}
+            />
+            <UnmatchedTable items={result.unmatched} onPair={pair} />
             {result.ignored.length > 0 && (
               <p className="text-sm text-muted-foreground">
                 Ignorováno {plural(result.ignored.length, "odchozí pohyb", "odchozí pohyby", "odchozích pohybů")}{" "}

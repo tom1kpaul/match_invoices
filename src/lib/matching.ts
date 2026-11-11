@@ -44,7 +44,7 @@ export interface ParseResult<T> {
 
 export interface MatchedPayment {
   payment: Payment;
-  via: "vs" | "message";
+  via: "vs" | "message" | "manual";
 }
 
 export interface InvoiceResult {
@@ -58,10 +58,34 @@ export interface InvoiceResult {
   possibleDuplicate: boolean;
 }
 
+/** Parametry, podle kterých se hledá nejpodobnější faktura. */
+export type SuggestionParam = "amount" | "currency" | "customer" | "vs" | "date";
+
+export const SUGGESTION_PARAM_LABELS: Record<SuggestionParam, string> = {
+  amount: "částka",
+  currency: "měna",
+  customer: "odběratel",
+  vs: "VS / číslo faktury",
+  date: "datum",
+};
+
+export const SUGGESTION_PARAM_COUNT = 5;
+/** Návrh se zobrazí, jen když sedí většina parametrů (3 z 5). */
+export const SUGGESTION_MIN_MATCHES = 3;
+
+export interface Suggestion {
+  invoice: Invoice;
+  matched: SuggestionParam[];
+}
+
 export interface UnmatchedPayment {
   payment: Payment;
   reason: string;
+  suggestion: Suggestion | null;
 }
+
+/** Ruční spárování: id platby → id faktury. */
+export type ManualPairs = Record<string, string>;
 
 export interface MatchSummary {
   counts: Record<InvoiceStatus, number>;
@@ -273,7 +297,9 @@ export function matchPayments(
   invoices: Invoice[],
   payments: Payment[],
   today: Date = new Date(),
+  manual: ManualPairs = {},
 ): MatchResult {
+  const byId = new Map(invoices.map((inv) => [inv.id, inv]));
   const byVs = new Map<string, Invoice>();
   for (const inv of invoices) {
     const vs = normalizeVs(inv.vs);
@@ -281,7 +307,7 @@ export function matchPayments(
   }
 
   const assigned = new Map<string, MatchedPayment[]>();
-  const unmatched: UnmatchedPayment[] = [];
+  const unmatched: Omit<UnmatchedPayment, "suggestion">[] = [];
   const ignored: Payment[] = [];
 
   for (const p of payments) {
@@ -294,8 +320,13 @@ export function matchPayments(
     let invoice: Invoice | undefined;
     let via: MatchedPayment["via"] = "vs";
     const vs = normalizeVs(p.vs);
+    const manualInvoice = manual[p.id] ? byId.get(manual[p.id]!) : undefined;
 
-    if (vs) {
+    if (manualInvoice) {
+      // 0. Ručně spárovaná platba má přednost.
+      invoice = manualInvoice;
+      via = "manual";
+    } else if (vs) {
       // 2. Párování podle variabilního symbolu.
       invoice = byVs.get(vs);
       if (!invoice) {
@@ -375,7 +406,112 @@ export function matchPayments(
     .map(([currency, amount]) => ({ currency, amount }))
     .sort((a, b) => (a.currency === "CZK" ? -1 : b.currency === "CZK" ? 1 : a.currency.localeCompare(b.currency)));
 
-  return { invoices: results, unmatched, ignored, summary: { counts, overdueUnpaid, owed } };
+  const remaining = new Map(results.map((r) => [r.invoice.id, -r.difference]));
+  const unmatchedWithSuggestions: UnmatchedPayment[] = unmatched.map((u) => ({
+    ...u,
+    suggestion: suggestInvoice(u.payment, invoices, remaining),
+  }));
+
+  return {
+    invoices: results,
+    unmatched: unmatchedWithSuggestions,
+    ignored,
+    summary: { counts, overdueUnpaid, owed },
+  };
+}
+
+/* ---------- Návrh faktury pro nespárovanou platbu ---------- */
+
+const LEGAL_FORMS = new Set(["sro", "as", "spol", "vos", "ks", "zs", "ops"]);
+
+function nameTokens(name: string): string[] {
+  return normalizeHeader(name)
+    .replace(/s\.\s*r\.\s*o\.?/g, " sro ")
+    .replace(/a\.\s*s\.?/g, " as ")
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 2 && !LEGAL_FORMS.has(t));
+}
+
+/** Název protiúčtu odpovídá odběrateli, když obsahuje aspoň polovinu jeho slov. */
+export function similarName(accountName: string, customer: string): boolean {
+  const a = new Set(nameTokens(accountName));
+  const c = nameTokens(customer);
+  if (a.size === 0 || c.length === 0) return false;
+  const hits = c.filter((t) => a.has(t)).length;
+  return hits * 2 >= c.length;
+}
+
+/** VS se liší nejvýš o jednu číslici (překlep, prohozené sousední číslice, chybějící/navíc číslice). */
+export function similarVs(a: string, b: string): boolean {
+  const x = normalizeVs(a);
+  const y = normalizeVs(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  if (Math.abs(x.length - y.length) > 1) return false;
+  // Damerau–Levenshtein (optimal string alignment) ≤ 1
+  const d: number[][] = Array.from({ length: x.length + 1 }, (_, i) =>
+    Array.from({ length: y.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
+  );
+  for (let i = 1; i <= x.length; i++) {
+    for (let j = 1; j <= y.length; j++) {
+      const cost = x[i - 1] === y[j - 1] ? 0 : 1;
+      d[i]![j] = Math.min(d[i - 1]![j]! + 1, d[i]![j - 1]! + 1, d[i - 1]![j - 1]! + cost);
+      if (i > 1 && j > 1 && x[i - 1] === y[j - 2] && x[i - 2] === y[j - 1]) {
+        d[i]![j] = Math.min(d[i]![j]!, d[i - 2]![j - 2]! + 1);
+      }
+    }
+  }
+  return d[x.length]![y.length]! <= 1;
+}
+
+const DAY = 24 * 60 * 60 * 1000;
+/** Platba „sedí datem", když přišla od vystavení faktury do 60 dnů po splatnosti. */
+const DATE_TOLERANCE_DAYS = 60;
+
+function dateFits(payment: Payment, invoice: Invoice): boolean {
+  if (!payment.date) return false;
+  const t = payment.date.getTime();
+  const from = invoice.issueDate ?? (invoice.dueDate ? new Date(invoice.dueDate.getTime() - 30 * DAY) : null);
+  const to = invoice.dueDate ?? invoice.issueDate;
+  if (!from || !to) return false;
+  return t >= from.getTime() && t <= to.getTime() + DATE_TOLERANCE_DAYS * DAY;
+}
+
+function referenceFits(payment: Payment, invoice: Invoice): boolean {
+  if (similarVs(payment.vs, invoice.vs)) return true;
+  const msg = payment.message.toUpperCase().replace(/\s+/g, "");
+  if (invoice.number && msg.includes(invoice.number.toUpperCase().replace(/\s+/g, ""))) return true;
+  return (payment.message.match(/\d+/g) ?? []).some((n) => similarVs(n, invoice.vs));
+}
+
+/**
+ * Najde fakturu, u které sedí většina parametrů (částka, měna, odběratel, VS, datum).
+ * Měna musí sedět vždy – platbu v jiné měně nelze k faktuře připočíst.
+ * @param remaining zbývající dlužná částka podle id faktury (haléře)
+ */
+export function suggestInvoice(
+  payment: Payment,
+  invoices: Invoice[],
+  remaining: Map<string, number> = new Map(),
+): Suggestion | null {
+  let best: { s: Suggestion; score: number } | null = null;
+
+  for (const invoice of invoices) {
+    if (invoice.currency !== payment.currency) continue;
+    const left = remaining.get(invoice.id) ?? invoice.amount;
+    const matched: SuggestionParam[] = [];
+    if (payment.amount === invoice.amount || (left > 0 && payment.amount === left)) matched.push("amount");
+    matched.push("currency");
+    if (similarName(payment.accountName, invoice.customer)) matched.push("customer");
+    if (referenceFits(payment, invoice)) matched.push("vs");
+    if (dateFits(payment, invoice)) matched.push("date");
+
+    if (matched.length < SUGGESTION_MIN_MATCHES) continue;
+    // Pořadí: počet shod, pak faktury, které ještě nejsou uhrazené.
+    const score = matched.length * 10 + (left > 0 ? 1 : 0);
+    if (!best || score > best.score) best = { s: { invoice, matched }, score };
+  }
+  return best?.s ?? null;
 }
 
 /* ---------- Formátování ---------- */
