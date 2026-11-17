@@ -62,23 +62,13 @@ Zatím bez přihlašování a bez databáze, vše se zpracuje v prohlížeči.
 
 Design čistý a jednoduchý.
 
-This project was built with [Lovable](https://lovable.dev).
+## Vývoj
 
-## Build with Lovable
-
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/76197da2-4b7e-5e59-9f0c-285d941c59da).
-
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
-
-## Development
-
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+Potřebuješ Node.js a npm.
 
 ```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
-npm run dev
+npm install      # nainstaluje závislosti
+npm run dev      # spustí aplikaci na http://localhost:8080
+npm test         # spustí testy
+npm run build    # sestaví produkční verzi do složky .output/
 ```
