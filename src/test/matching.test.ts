@@ -116,6 +116,51 @@ describe("pravidla párování", () => {
   });
 });
 
+describe("jedna platba za více faktur", () => {
+  it("dva VS ve zprávě – platba se rozdělí a obě faktury jsou zaplacené", () => {
+    const r = matchPayments(
+      [inv("11", 484000), inv("12", 726000)],
+      [pay(1210000, "", "Faktury 11 a 12")],
+      TODAY,
+    );
+    expect(r.invoices.map((i) => i.status)).toEqual(["paid", "paid"]);
+    expect(r.invoices[0]!.payments[0]!.amount).toBe(484000);
+    expect(r.invoices[1]!.payments[0]!.amount).toBe(726000);
+    expect(r.invoices[0]!.payments[0]!.sharedWith).toEqual(["FV12"]);
+    expect(r.unmatched).toHaveLength(0);
+  });
+
+  it("nižší platba zaplatí první fakturu, u druhé chybí zbytek", () => {
+    const r = matchPayments([inv("11", 484000), inv("12", 726000)], [pay(1000000, "", "11, 12")], TODAY);
+    expect(r.invoices[0]!.status).toBe("paid");
+    expect(r.invoices[1]!.status).toBe("partial");
+    expect(r.invoices[1]!.difference).toBe(-210000);
+  });
+
+  it("přeplatek připadne poslední faktuře ze zprávy", () => {
+    const r = matchPayments([inv("11", 484000), inv("12", 726000)], [pay(1300000, "", "12 a 11")], TODAY);
+    expect(r.invoices[1]!.status).toBe("paid");
+    expect(r.invoices[0]!.status).toBe("overpaid");
+    expect(r.invoices[0]!.difference).toBe(90000);
+  });
+
+  it("VS v kolonce a další VS ve zprávě", () => {
+    const r = matchPayments([inv("11", 484000), inv("12", 726000)], [pay(1210000, "11", "a také 12")], TODAY);
+    expect(r.invoices.map((i) => i.status)).toEqual(["paid", "paid"]);
+    expect(r.invoices[0]!.payments[0]!.via).toBe("vs");
+  });
+
+  it("započte dřívější zálohu, i když je ve výpisu až za společnou platbou", () => {
+    const r = matchPayments(
+      [inv("11", 484000), inv("12", 726000)],
+      [pay(926000, "", "11 + 12"), pay(284000, "11", "záloha")],
+      TODAY,
+    );
+    // na FV11 zbývalo 2 000 Kč, zbytek 7 260 Kč šel na FV12
+    expect(r.invoices.map((i) => i.status)).toEqual(["paid", "paid"]);
+  });
+});
+
 describe("ruční spárování s nejpodobnější fakturou", () => {
   function full(over: Partial<Payment>): Payment {
     return { ...pay(605000, "2026060", "Faktura listopad"), ...over };
@@ -166,7 +211,7 @@ describe("ukázková data", () => {
     const invoices = parseInvoicesCsv(SAMPLE_INVOICES_CSV).items;
     const payments = parseStatementCsv(SAMPLE_STATEMENT_CSV).items;
     const r = matchPayments(invoices, payments, TODAY);
-    expect(r.summary.counts).toEqual({ paid: 3, partial: 1, overpaid: 2, unpaid: 2 });
+    expect(r.summary.counts).toEqual({ paid: 5, partial: 1, overpaid: 2, unpaid: 2 });
     expect(r.summary.overdueUnpaid).toBe(1);
     expect(r.unmatched).toHaveLength(3);
     expect(r.unmatched.map((u) => u.suggestion?.invoice.number ?? null)).toEqual([

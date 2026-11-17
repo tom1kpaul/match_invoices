@@ -7,6 +7,8 @@ FV2026005;Truhlářství Dvořák;56789012;15.10.2026;29.10.2026;18 150,00;CZK;2
 FV2026006;Zahradnictví Kvítek;67890123;01.11.2026;30.11.2026;6 050,00;CZK;2026006
 FV2026007;Autoservis Rychlý;78901234;20.10.2026;03.11.2026;9 680,00;CZK;2026007
 FV2026008;Tiskárna Písmeno s.r.o.;89012345;25.10.2026;08.11.2026;24 200,00;CZK;2026008
+FV2026011;Elektro Bílek s.r.o.;90123456;02.11.2026;16.11.2026;4 840,00;CZK;2026011
+FV2026012;Elektro Bílek s.r.o.;90123456;03.11.2026;17.11.2026;7 260,00;CZK;2026012
 `;
 
 export const SAMPLE_STATEMENT_CSV = `Datum;Částka;Měna;Protiúčet;Název protiúčtu;Variabilní symbol;Zpráva pro příjemce
@@ -23,4 +25,5 @@ export const SAMPLE_STATEMENT_CSV = `Datum;Částka;Měna;Protiúčet;Název pro
 05.11.2026;5 000,00;CZK;7890123456/0100;Jan Svoboda;2026099;Faktura
 06.11.2026;1 500,00;CZK;8901234567/2700;Neznámý plátce;;Děkujeme za spolupráci
 08.11.2026;6 050,00;CZK;9012345678/0100;Zahradnictví Kvítek;2026060;Faktura listopad
+10.11.2026;12 100,00;CZK;1122334455/0300;Elektro Bílek s.r.o.;;Faktury 2026011 a 2026012
 `;

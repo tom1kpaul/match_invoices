@@ -45,6 +45,10 @@ export interface ParseResult<T> {
 export interface MatchedPayment {
   payment: Payment;
   via: "vs" | "message" | "manual";
+  /** Kolik z platby připadá na tuto fakturu (haléře). U běžné platby = celá částka. */
+  amount: number;
+  /** Čísla dalších faktur, mezi které se platba rozdělila (jedna platba za více faktur). */
+  sharedWith: string[];
 }
 
 export interface InvoiceResult {
@@ -289,6 +293,16 @@ export function parseStatementCsv(text: string): ParseResult<Payment> {
 
 /* ---------- Párování ---------- */
 
+/** Faktury, jejichž VS se objevuje ve zprávě – v pořadí výskytu, bez opakování. */
+function invoicesInMessage(message: string, byVs: Map<string, Invoice>): Invoice[] {
+  const found: Invoice[] = [];
+  for (const n of message.match(/\d+/g) ?? []) {
+    const invoice = byVs.get(normalizeVs(n));
+    if (invoice && !found.includes(invoice)) found.push(invoice);
+  }
+  return found;
+}
+
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
@@ -309,6 +323,14 @@ export function matchPayments(
   const assigned = new Map<string, MatchedPayment[]>();
   const unmatched: Omit<UnmatchedPayment, "suggestion">[] = [];
   const ignored: Payment[] = [];
+  /** Platby za více faktur najednou – rozdělí se až po započtení běžných plateb. */
+  const shared: { payment: Payment; via: MatchedPayment["via"]; invoices: Invoice[] }[] = [];
+
+  const assign = (invoice: Invoice, m: MatchedPayment) => {
+    const list = assigned.get(invoice.id) ?? [];
+    list.push(m);
+    assigned.set(invoice.id, list);
+  };
 
   for (const p of payments) {
     // 1. Odchozí platby a poplatky ignorujeme.
@@ -317,43 +339,43 @@ export function matchPayments(
       continue;
     }
 
-    let invoice: Invoice | undefined;
+    let targets: Invoice[];
     let via: MatchedPayment["via"] = "vs";
     const vs = normalizeVs(p.vs);
     const manualInvoice = manual[p.id] ? byId.get(manual[p.id]!) : undefined;
 
     if (manualInvoice) {
       // 0. Ručně spárovaná platba má přednost.
-      invoice = manualInvoice;
+      targets = [manualInvoice];
       via = "manual";
-    } else if (vs) {
-      // 2. Párování podle variabilního symbolu.
-      invoice = byVs.get(vs);
-      if (!invoice) {
-        unmatched.push({ payment: p, reason: "Variabilní symbol neodpovídá žádné faktuře" });
-        continue;
-      }
     } else {
-      // 3. Bez VS – hledáme číslo VS ve zprávě pro příjemce.
-      const candidates = p.message.match(/\d+/g) ?? [];
-      for (const c of candidates) {
-        const found = byVs.get(normalizeVs(c));
-        if (found) {
-          invoice = found;
-          via = "message";
-          break;
+      // VS faktur nalezené ve zprávě pro příjemce (může jich být víc).
+      const fromMessage = invoicesInMessage(p.message, byVs);
+      if (vs) {
+        // 2. Párování podle variabilního symbolu (+ případné další VS ve zprávě).
+        const invoice = byVs.get(vs);
+        if (!invoice) {
+          unmatched.push({ payment: p, reason: "Variabilní symbol neodpovídá žádné faktuře" });
+          continue;
         }
-      }
-      if (!invoice) {
-        unmatched.push({
-          payment: p,
-          reason: "Bez variabilního symbolu, ve zprávě nenalezen",
-        });
-        continue;
+        targets = [invoice, ...fromMessage.filter((i) => i !== invoice)];
+      } else {
+        // 3. Bez VS – hledáme čísla VS ve zprávě pro příjemce.
+        if (fromMessage.length === 0) {
+          unmatched.push({
+            payment: p,
+            reason: "Bez variabilního symbolu, ve zprávě nenalezen",
+          });
+          continue;
+        }
+        targets = fromMessage;
+        via = "message";
       }
     }
 
-    if (invoice.currency !== p.currency) {
+    const sameCurrency = targets.filter((i) => i.currency === p.currency);
+    if (sameCurrency.length === 0) {
+      const invoice = targets[0]!;
       unmatched.push({
         payment: p,
         reason: `Měna ${p.currency} neodpovídá faktuře ${invoice.number} (${invoice.currency})`,
@@ -361,9 +383,34 @@ export function matchPayments(
       continue;
     }
 
-    const list = assigned.get(invoice.id) ?? [];
-    list.push({ payment: p, via });
-    assigned.set(invoice.id, list);
+    if (sameCurrency.length === 1) {
+      assign(sameCurrency[0]!, { payment: p, via, amount: p.amount, sharedWith: [] });
+    } else {
+      shared.push({ payment: p, via, invoices: sameCurrency });
+    }
+  }
+
+  // 5. Jedna platba za více faktur: každá faktura (v pořadí ze zprávy) dostane, kolik na ní
+  //    ještě zbývá; co zbude, připadne poslední faktuře (případný přeplatek).
+  const paidSoFar = new Map<string, number>();
+  for (const [id, list] of assigned) {
+    paidSoFar.set(id, list.reduce((sum, m) => sum + m.amount, 0));
+  }
+  for (const { payment: p, via, invoices: targets } of shared) {
+    let left = p.amount;
+    const parts: { invoice: Invoice; amount: number }[] = [];
+    targets.forEach((invoice, i) => {
+      const isLast = i === targets.length - 1;
+      const due = Math.max(invoice.amount - (paidSoFar.get(invoice.id) ?? 0), 0);
+      const part = isLast ? left : Math.min(due, left);
+      if (part > 0) parts.push({ invoice, amount: part });
+      left -= part;
+    });
+    for (const { invoice, amount } of parts) {
+      const sharedWith = parts.filter((x) => x.invoice !== invoice).map((x) => x.invoice.number);
+      assign(invoice, { payment: p, via, amount, sharedWith });
+      paidSoFar.set(invoice.id, (paidSoFar.get(invoice.id) ?? 0) + amount);
+    }
   }
 
   const todayStart = startOfDay(today);
@@ -374,7 +421,7 @@ export function matchPayments(
   const results: InvoiceResult[] = invoices.map((invoice) => {
     const matched = assigned.get(invoice.id) ?? [];
     // 4. Více plateb k jedné faktuře se sčítá.
-    const paid = matched.reduce((sum, m) => sum + m.payment.amount, 0);
+    const paid = matched.reduce((sum, m) => sum + m.amount, 0);
     const difference = paid - invoice.amount;
 
     let status: InvoiceStatus;
@@ -388,7 +435,7 @@ export function matchPayments(
 
     const amountCounts = new Map<number, number>();
     for (const m of matched) {
-      amountCounts.set(m.payment.amount, (amountCounts.get(m.payment.amount) ?? 0) + 1);
+      amountCounts.set(m.amount, (amountCounts.get(m.amount) ?? 0) + 1);
     }
     const possibleDuplicate =
       paid > invoice.amount && [...amountCounts.values()].some((n) => n >= 2);

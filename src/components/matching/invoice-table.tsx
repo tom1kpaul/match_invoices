@@ -187,14 +187,20 @@ export function InvoiceTable({ results, filter, onFilter, onUnpair }: InvoiceTab
                         </p>
                       ) : (
                         <ul className="space-y-1.5 text-sm">
-                          {r.payments.map(({ payment: p, via }) => (
+                          {r.payments.map(({ payment: p, via, amount, sharedWith }) => (
                             <li key={p.id} className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5">
                               <span className="num w-24 text-muted-foreground">
                                 {formatDate(p.date)}
                               </span>
                               <span className="num w-32 text-right font-medium">
-                                {formatMoney(p.amount, p.currency)}
+                                {formatMoney(amount, p.currency)}
                               </span>
+                              {sharedWith.length > 0 && (
+                                <span className="num text-xs text-info">
+                                  část platby {formatMoney(p.amount, p.currency)}, zbytek k{" "}
+                                  {sharedWith.join(", ")}
+                                </span>
+                              )}
                               <span>{p.accountName || p.account || "—"}</span>
                               <span className="text-muted-foreground">
                                 {via === "vs"
