@@ -12,14 +12,14 @@ import {
 import {
   formatDate,
   formatMoney,
+  matchesFilter,
+  plural,
   STATUS_LABELS,
+  type InvoiceFilter,
   type InvoiceResult,
-  type InvoiceStatus,
 } from "@/lib/matching";
 import { cn } from "@/lib/utils";
 import { StatusBadge } from "./status-badge";
-
-export type InvoiceFilter = "all" | InvoiceStatus | "overdue" | "duplicate";
 
 const FILTERS: { value: InvoiceFilter; label: string }[] = [
   { value: "all", label: "Vše" },
@@ -31,13 +31,6 @@ const FILTERS: { value: InvoiceFilter; label: string }[] = [
   { value: "duplicate", label: "Možná duplicita" },
 ];
 
-function matches(r: InvoiceResult, f: InvoiceFilter) {
-  if (f === "all") return true;
-  if (f === "overdue") return r.overdue;
-  if (f === "duplicate") return r.possibleDuplicate;
-  return r.status === f;
-}
-
 interface InvoiceTableProps {
   results: InvoiceResult[];
   filter: InvoiceFilter;
@@ -47,7 +40,7 @@ interface InvoiceTableProps {
 
 export function InvoiceTable({ results, filter, onFilter, onUnpair }: InvoiceTableProps) {
   const [open, setOpen] = useState<Set<string>>(new Set());
-  const rows = results.filter((r) => matches(r, filter));
+  const rows = results.filter((r) => matchesFilter(r, filter));
 
   const toggle = (id: string) =>
     setOpen((prev) => {
@@ -63,7 +56,7 @@ export function InvoiceTable({ results, filter, onFilter, onUnpair }: InvoiceTab
         <h2 className="font-semibold">Faktury</h2>
         <div role="group" aria-label="Filtr podle stavu" className="flex flex-wrap gap-1.5">
           {FILTERS.map((f) => {
-            const count = results.filter((r) => matches(r, f.value)).length;
+            const count = results.filter((r) => matchesFilter(r, f.value)).length;
             const active = filter === f.value;
             return (
               <button
@@ -148,11 +141,7 @@ export function InvoiceTable({ results, filter, onFilter, onUnpair }: InvoiceTab
                   <TableCell className="num text-right text-muted-foreground">
                     {formatMoney(r.paid, inv.currency)}
                     <div className="text-xs">
-                      {r.payments.length === 1
-                        ? "1 platba"
-                        : r.payments.length >= 2 && r.payments.length <= 4
-                          ? `${r.payments.length} platby`
-                          : `${r.payments.length} plateb`}
+                      {plural(r.payments.length, "platba", "platby", "plateb")}
                     </div>
                   </TableCell>
                   <TableCell className="pr-4">

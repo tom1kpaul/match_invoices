@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatDate,
+  formatMoney,
+  matchesFilter,
   matchPayments,
+  normalizeVs,
   parseAmount,
+  parseCsv,
   parseDate,
   parseInvoicesCsv,
   parseStatementCsv,
+  plural,
+  similarName,
+  similarVs,
   type Invoice,
   type Payment,
 } from "@/lib/matching";
@@ -222,5 +230,170 @@ describe("ukázková data", () => {
     expect(r.ignored).toHaveLength(2);
     // 15 980 + 18 150 + 6 050
     expect(r.summary.owed).toEqual([{ currency: "CZK", amount: 4018000 }]);
+  });
+});
+
+describe("čtení CSV", () => {
+  it("středník uvnitř uvozovek nerozdělí sloupec, zdvojené uvozovky jsou znak \"", () => {
+    const rows = parseCsv('a;"b;c";"řekl ""ahoj"""\r\n\r\nd;e\r\n');
+    expect(rows).toEqual([
+      ["a", "b;c", 'řekl "ahoj"'],
+      ["d", "e"],
+    ]);
+  });
+
+  it("ignoruje BOM na začátku souboru", () => {
+    expect(parseCsv("﻿a;b")).toEqual([["a", "b"]]);
+  });
+
+  it("čte různé zápisy částek", () => {
+    expect(parseAmount("1 234,50")).toBe(123450); // nezlomitelná mezera
+    expect(parseAmount("1.234,50")).toBe(123450); // tečka jako oddělovač tisíců
+    expect(parseAmount("+500")).toBe(50000);
+    expect(parseAmount("abc")).toBeNull();
+    expect(parseAmount("")).toBeNull();
+  });
+
+  it("VS bez úvodních nul a jiných znaků", () => {
+    expect(normalizeVs("0002026001")).toBe("2026001");
+    expect(normalizeVs("VS: 2026 001")).toBe("2026001");
+  });
+});
+
+describe("načtení souborů", () => {
+  it("chybějící sloupce ohlásí srozumitelnou chybou", () => {
+    expect(() => parseInvoicesCsv("Číslo faktury;Odběratel\nFV1;Firma")).toThrow(
+      "V souboru chybí sloupce: IČO",
+    );
+  });
+
+  it("prázdný soubor ohlásí chybou", () => {
+    expect(() => parseStatementCsv("")).toThrow("Soubor je prázdný.");
+  });
+
+  it("pozná hlavičku bez diakritiky a malými písmeny, vadný řádek přeskočí", () => {
+    const csv = [
+      "cislo faktury;odberatel;ico;datum vystaveni;datum splatnosti;castka;mena;variabilni symbol",
+      "FV1;Firma;1;01.11.2026;30.11.2026;1 000,00;Kč;1",
+      "FV2;Firma;1;01.11.2026;30.11.2026;xyz;CZK;2",
+    ].join("\n");
+    const r = parseInvoicesCsv(csv);
+    expect(r.items).toHaveLength(1);
+    expect(r.items[0]!.amount).toBe(100000);
+    expect(r.items[0]!.currency).toBe("CZK"); // „Kč“ → CZK
+    expect(r.warnings[0]).toContain("Řádek 3: neplatná částka");
+  });
+});
+
+describe("další pravidla párování", () => {
+  it("VS s úvodními nulami se spáruje", () => {
+    const r = matchPayments([inv("2026001", 10000)], [pay(10000, "0002026001")], TODAY);
+    expect(r.invoices[0]!.status).toBe("paid");
+  });
+
+  it("platba v jiné měně se nepřipočte", () => {
+    const p = { ...pay(10000, "1"), currency: "EUR" };
+    const r = matchPayments([inv("1", 10000)], [p], TODAY);
+    expect(r.invoices[0]!.status).toBe("unpaid");
+    expect(r.unmatched[0]!.reason).toBe("Měna EUR neodpovídá faktuře FV1 (CZK)");
+  });
+
+  it("ruční spárování má přednost před VS", () => {
+    const p = pay(10000, "1");
+    const r = matchPayments([inv("1", 10000), inv("2", 10000)], [p], TODAY, { [p.id]: "inv-2" });
+    expect(r.invoices[0]!.status).toBe("unpaid");
+    expect(r.invoices[1]!.status).toBe("paid");
+  });
+
+  it("neznámý VS v kolonce – zpráva se už neprohledává", () => {
+    const r = matchPayments([inv("5", 10000)], [pay(10000, "999", "za fakturu 5")], TODAY);
+    expect(r.invoices[0]!.status).toBe("unpaid");
+    expect(r.unmatched[0]!.reason).toBe("Variabilní symbol neodpovídá žádné faktuře");
+  });
+
+  it("zaplacená nebo přeplacená faktura není po splatnosti", () => {
+    const r = matchPayments(
+      [inv("6", 10000, "01.10.2026"), inv("7", 10000, "01.10.2026")],
+      [pay(10000, "6"), pay(20000, "7")],
+      TODAY,
+    );
+    expect(r.invoices.map((i) => i.overdue)).toEqual([false, false]);
+  });
+});
+
+describe("souhrn", () => {
+  it("dlužnou částku počítá zvlášť pro každou měnu, CZK první", () => {
+    const r = matchPayments(
+      [{ ...inv("1", 5000), currency: "EUR" }, inv("2", 10000), inv("3", 20000)],
+      [pay(5000, "3")],
+      TODAY,
+    );
+    expect(r.summary.counts).toEqual({ paid: 0, partial: 1, overpaid: 0, unpaid: 2 });
+    expect(r.summary.owed).toEqual([
+      { currency: "CZK", amount: 25000 }, // 100 Kč + zbývajících 150 Kč
+      { currency: "EUR", amount: 5000 },
+    ]);
+  });
+});
+
+describe("filtr faktur", () => {
+  const r = matchPayments(
+    [inv("1", 10000, "01.10.2026"), inv("2", 10000)],
+    [pay(10000, "2"), pay(10000, "2")],
+    TODAY,
+  );
+  const [overdue, duplicate] = r.invoices as [(typeof r.invoices)[0], (typeof r.invoices)[0]];
+
+  it("„Vše“ ukáže všechny faktury", () => {
+    expect(r.invoices.filter((i) => matchesFilter(i, "all"))).toHaveLength(2);
+  });
+
+  it("filtr podle stavu", () => {
+    expect(matchesFilter(overdue, "unpaid")).toBe(true);
+    expect(matchesFilter(duplicate, "unpaid")).toBe(false);
+    expect(matchesFilter(duplicate, "overpaid")).toBe(true);
+  });
+
+  it("„Po splatnosti“ a „Možná duplicita“", () => {
+    expect(matchesFilter(overdue, "overdue")).toBe(true);
+    expect(matchesFilter(duplicate, "overdue")).toBe(false);
+    expect(matchesFilter(duplicate, "duplicate")).toBe(true);
+    expect(matchesFilter(overdue, "duplicate")).toBe(false);
+  });
+});
+
+describe("podobnost pro návrhy", () => {
+  it("jméno odběratele – právní forma se nepočítá", () => {
+    expect(similarName("NOVÁK s.r.o.", "Kovářství Novák s.r.o.")).toBe(true);
+    expect(similarName("Jan Svoboda", "Kovářství Novák s.r.o.")).toBe(false);
+    expect(similarName("", "Firma")).toBe(false);
+  });
+
+  it("VS s jedním překlepem je podobný, se dvěma ne", () => {
+    expect(similarVs("2026006", "2026060")).toBe(true); // prohozené číslice
+    expect(similarVs("2026001", "202600")).toBe(true); // chybí číslice
+    expect(similarVs("2026001", "2026099")).toBe(false); // dvě chyby
+    expect(similarVs("2026001", "")).toBe(false);
+  });
+});
+
+describe("formátování", () => {
+  it("skloňuje počty", () => {
+    expect(plural(1, "platba", "platby", "plateb")).toBe("1 platba");
+    expect(plural(3, "platba", "platby", "plateb")).toBe("3 platby");
+    expect(plural(0, "platba", "platby", "plateb")).toBe("0 plateb");
+    expect(plural(5, "platba", "platby", "plateb")).toBe("5 plateb");
+  });
+
+  it("částku z haléřů zobrazí v korunách", () => {
+    // Intl používá nezlomitelné mezery – pro porovnání je převedeme na obyčejné.
+    const plain = (s: string) => s.replace(/\s/g, " ");
+    expect(plain(formatMoney(1210000, "CZK"))).toBe("12 100,00 Kč");
+    expect(plain(formatMoney(150000, "EUR"))).toBe("1 500,00 €");
+  });
+
+  it("datum ve formátu DD.MM.RRRR", () => {
+    expect(formatDate(new Date(2026, 0, 5))).toBe("05.01.2026");
+    expect(formatDate(null)).toBe("—");
   });
 });

@@ -4,13 +4,15 @@ import { Download, RotateCcw, ShieldCheck, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { UploadCard } from "@/components/matching/upload-card";
 import { Summary } from "@/components/matching/summary";
-import { InvoiceTable, type InvoiceFilter } from "@/components/matching/invoice-table";
+import { InvoiceTable } from "@/components/matching/invoice-table";
 import { UnmatchedTable } from "@/components/matching/unmatched-table";
 import {
   matchPayments,
   parseInvoicesCsv,
   parseStatementCsv,
+  plural,
   type Invoice,
+  type InvoiceFilter,
   type ManualPairs,
   type ParseResult,
   type Payment,
@@ -42,12 +44,6 @@ export const Route = createFileRoute("/")({
 interface Loaded<T> {
   name: string;
   data: ParseResult<T>;
-}
-
-function plural(n: number, one: string, few: string, many: string) {
-  if (n === 1) return `${n} ${one}`;
-  if (n >= 2 && n <= 4) return `${n} ${few}`;
-  return `${n} ${many}`;
 }
 
 function Index() {

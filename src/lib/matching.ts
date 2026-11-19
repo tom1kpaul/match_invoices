@@ -561,7 +561,26 @@ export function suggestInvoice(
   return best?.s ?? null;
 }
 
+/* ---------- Filtr faktur ---------- */
+
+export type InvoiceFilter = "all" | InvoiceStatus | "overdue" | "duplicate";
+
+/** Patří faktura do vybraného filtru? */
+export function matchesFilter(r: InvoiceResult, f: InvoiceFilter): boolean {
+  if (f === "all") return true;
+  if (f === "overdue") return r.overdue;
+  if (f === "duplicate") return r.possibleDuplicate;
+  return r.status === f;
+}
+
 /* ---------- Formátování ---------- */
+
+/** České skloňování počtu: plural(1, "platba", "platby", "plateb") → „1 platba“. */
+export function plural(n: number, one: string, few: string, many: string): string {
+  if (n === 1) return `${n} ${one}`;
+  if (n >= 2 && n <= 4) return `${n} ${few}`;
+  return `${n} ${many}`;
+}
 
 export function formatMoney(halere: number, currency: string): string {
   const value = halere / 100;

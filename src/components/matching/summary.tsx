@@ -1,6 +1,11 @@
-import { formatMoney, STATUS_LABELS, type InvoiceStatus, type MatchSummary } from "@/lib/matching";
+import {
+  formatMoney,
+  STATUS_LABELS,
+  type InvoiceFilter,
+  type InvoiceStatus,
+  type MatchSummary,
+} from "@/lib/matching";
 import { cn } from "@/lib/utils";
-import type { InvoiceFilter } from "./invoice-table";
 
 const ORDER: { status: InvoiceStatus; dot: string }[] = [
   { status: "paid", dot: "bg-success" },
